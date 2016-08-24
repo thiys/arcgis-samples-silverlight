@@ -1,0 +1,282 @@
+define(['dojo/_base/declare', 
+		'jimu/BaseWidget',
+		"esri/map", 
+        "esri/toolbars/draw",
+        "esri/toolbars/edit",
+        "esri/graphic",
+        "esri/layers/FeatureLayer",
+        "esri/symbols/SimpleMarkerSymbol",
+        "esri/symbols/SimpleLineSymbol",
+        "esri/symbols/SimpleFillSymbol",
+        "esri/dijit/editing/TemplatePicker",
+        "dojo/_base/array", 
+        "dojo/_base/event", 
+        "dojo/_base/lang",
+        "dojo/parser", 
+        "dijit/registry",'dijit/_WidgetsInTemplateMixin',"esri/layers/FeatureLayer",'dojo/on',
+        "dijit/layout/BorderContainer", "dijit/layout/ContentPane", 
+        "dijit/form/Button", "dojo/domReady"
+		
+],
+function(declare, BaseWidget,
+Map, Draw, Edit, Graphic, 
+        FeatureLayer,
+        SimpleMarkerSymbol, SimpleLineSymbol, SimpleFillSymbol,
+        TemplatePicker,
+        arrayUtils, event, lang, parser, registry,_WidgetsInTemplateMixin,FeatureLayer,on
+) {
+  return declare([BaseWidget,_WidgetsInTemplateMixin], {
+    
+    baseClass: 'jimu-widget-DMEditor',
+	editToolbar: null,
+	drawToolbar: null,
+  selectedTemplate: null,
+  templatePicker: null,
+  editingEnabled : false,
+  currentLayer : null,
+  doubleClickHandle: null,
+  clickHandle: null,
+  user : null,
+  designNumber:null,
+  
+  
+	getLayerIds: function(){
+
+	var layerIds = this.map.graphicsLayerIds;
+	
+	
+	var layerArr = [];
+
+	for(var i = 0; i < layerIds.length;i++){
+	
+	var layer = this.map.getLayer(layerIds[i]);
+	if(layer.arcgisProps.title.indexOf(this.config.layerTitle)> -1)
+	{
+		layerArr.push(layer);
+	}
+		
+	}
+		this.initEditing(layerArr)
+	},
+	
+	  initEditing: function (layers) {
+
+          this.editToolbar = new Edit(this.map);
+
+			this.currentLayer = layers[0];
+		 
+        this.templatePicker = new TemplatePicker({
+            featureLayers: layers,
+            rows: "auto",
+            columns: 2,
+            grouping: true,
+            style: "height: auto; overflow: auto;"
+          }, "templatePickerDiv");
+
+          this.templatePicker.startup();
+
+          this.drawToolbar = new Draw(this.map);
+
+          
+          this.templatePicker.on("selection-change", lang.hitch(this,this._onSelectionChange));
+          this.drawToolbar.on("draw-end", lang.hitch(this,this._onDrawEnd));
+          this.editToolbar.on("deactivate", lang.hitch(this,this._onDeactivate));
+          this.editToolbar.on("vertex-move-stop", lang.hitch(this,this._vertexMoveStop));
+          this.editToolbar.on("graphic-move-stop", lang.hitch(this,this._vertexMoveStop));
+          
+          parser.parse();
+        },
+		
+		 disableWebMapPopup: function () {
+        if (this.map && this.map.webMapResponse) {
+          var handler = this.map.webMapResponse.clickEventHandle;
+          if (handler) {
+            handler.remove();
+            this.map.webMapResponse.clickEventHandle = null;
+          }
+        }
+      },
+
+      enableWebMapPopup: function () {
+        if (this.map && this.map.webMapResponse) {
+          var handler = this.map.webMapResponse.clickEventHandle;
+          var listener = this.map.webMapResponse.clickEventListener;
+          if (listener && !handler) {
+            this.map.webMapResponse.clickEventHandle = on(
+              this.map,
+              'click',
+              lang.hitch(this.map, listener)
+            );
+          }
+        }
+      },
+		
+		
+      _onDeactivate: function(evt){
+         this.currentLayer.applyEdits(null, [evt.graphic], null);
+      },
+        
+     _onDblClick: function(evt){
+        event.stop(evt);
+              if (this.editingEnabled === false) {
+                this.editingEnabled = true;
+                this.editToolbar.activate(Edit.EDIT_VERTICES , evt.graphic);
+              } else {
+				   
+                this.editToolbar.deactivate();
+                this.editingEnabled = false;
+              }
+       
+     },
+        
+     _onClick: function(evt){
+             event.stop(evt);
+              if (this.editingEnabled === false) {
+                this.editingEnabled = true;
+                this.editToolbar.activate(Edit.MOVE , evt.graphic);
+              } else {
+                this.editToolbar.deactivate();
+                this.editingEnabled = false;
+              }
+       
+     },
+        
+     _onSelectionChange: function(){
+        if( this.templatePicker.getSelected() ) {
+			
+			
+			
+			
+			
+              this.selectedTemplate = this.templatePicker.getSelected();
+			switch (this.selectedTemplate.featureLayer.geometryType) {
+              case "esriGeometryPoint":
+                this.drawToolbar.activate(Draw.POINT);
+                break;
+              case "esriGeometryPolyline":
+                this.drawToolbar.activate(Draw.POLYLINE);
+                break;
+              case "esriGeometryPolygon":
+                this.drawToolbar.activate(Draw.POLYGON);
+                break;
+            }
+            }
+			else{
+			this.drawToolbar.deactivate();
+			}
+			
+     },
+	 
+	_vertexMoveStop: function(evt){
+		evt.graphic.attributes.LAST_UPDT_BY = this.user;
+		evt.graphic.attributes.LAST_UPDT_TS = Date.now();
+		
+	},
+  
+  _MoveStop: function(evt){
+	  evt.graphic.attributes.LAST_UPDT_BY = this.user;
+		evt.graphic.attributes.LAST_UPDT_TS = Date.now();
+  },
+		
+		_onDrawEnd: function(evt){
+			
+			this.drawToolbar.deactivate();
+            this.editToolbar.deactivate();
+            var newAttributes = lang.mixin({}, this.selectedTemplate.template.prototype.attributes);
+			newAttributes.DSGN_NUM = this.designNumber;
+			newAttributes.ORIG_SYS_NAM = "GeoView";
+			newAttributes.CRTE_BY = this.user;
+			newAttributes.CRTE_TS = Date.now();
+
+            var newGraphic = new Graphic(evt.geometry, null, newAttributes);
+            this.selectedTemplate.featureLayer.applyEdits([newGraphic], null, null);
+			this.templatePicker.clearSelection();
+		},
+
+    postCreate: function() {
+      this.inherited(arguments);
+      console.log('postCreate');
+    },
+
+    startup: function() {
+      this.inherited(arguments);
+	  this.getLayerIds();
+	  //read from Query String 
+		  var query = window.location.search.substring(1);
+		  var vars = query.split('&');
+		  for(var i=0;i< vars.length;i++)
+		  {
+			  var pair = vars[i];
+			   if(pair.match('user_id'))
+			  {
+				 var userId = pair.split('=');
+				 this.user = userId[1];
+			  }
+			    if(pair.match('design_no'))
+			  {
+				 var designno = pair.split('=');
+				 this.designNumber = designno[1];
+			  }
+		  }
+	  //End read
+	  
+      
+    },
+
+    onOpen: function(){
+		this.disableWebMapPopup();
+		this.map.setInfoWindowOnClick(false);
+      
+     
+			// this.doubleClickHandle =  this.own(this.currentLayer.on("dbl-click", lang.hitch(this,this._onDblClick)));	
+			 //this.clickHandle = this.own(this.currentLayer.on("click", lang.hitch(this,this._onClick)));
+			 
+			  this.doubleClickHandle =  on(this.currentLayer,"dbl-click", lang.hitch(this,this._onDblClick));	
+			 this.clickHandle = on(this.currentLayer,"click", lang.hitch(this,this._onClick));
+     
+      console.log('onOpen');
+    },
+
+    onClose: function(){
+		
+		this.enableWebMapPopup();
+		this.map.setInfoWindowOnClick(true);
+		
+		if(this.drawToolbar === null){
+		this.drawToolbar.deactivate();
+		}
+		if(this.editToolbar === null){
+		this.editToolbar.deactivate();
+		}
+    
+	
+	if(this.doubleClickHandle){
+		this.doubleClickHandle.remove();
+	}
+	if(this.clickHandle){
+		this.clickHandle.remove();
+	}
+    this.handlesStarted = false;
+		
+		console.log('onClose');
+		
+    },
+
+    onMinimize: function(){
+      console.log('onMinimize');
+    },
+
+    onMaximize: function(){
+      console.log('onMaximize');
+    },
+
+    onSignIn: function(credential){
+      /* jshint unused:false*/
+      console.log('onSignIn');
+    },
+
+    onSignOut: function(){
+      console.log('onSignOut');
+    }
+  });
+});
